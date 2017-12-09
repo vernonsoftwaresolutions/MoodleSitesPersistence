@@ -1,0 +1,167 @@
+  ############
+  # example usage:
+  # aws cloudformation package --template-file sites.cf.yaml --output-template-file sites-output.yaml --s3-bucket moodle-deployables
+  # aws cloudformation deploy --template-file sites-output.yaml --capabilities CAPABILITY_IAM 
+  # --stack-name sites-dev --parameter-overrides VpcId=vpc-c7aa77be SubnetIds=subnet-dda13195,subnet-30ee3c6a DBName=moodlesites 
+  # DBUsername=devuser DBPassword=devpassword DBClass=db.t2.micro DBAllocatedStorage=5 Environment=dev
+
+  ############
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'PostgreSQL RDS Template'
+Parameters:
+  Environment:
+    Type: String
+    AllowedValues:
+      - dev
+      - stage
+      - prod
+    Default: dev
+    Description: environment that can be added to resource names
+  VpcId:
+    Description: The id of targeted VPC
+    Type: AWS::EC2::VPC::Id
+    ConstraintDescription: must be valid vpc
+  SubnetIds:
+    Description: List of subnets to deploy RDS to
+    Type: List<AWS::EC2::Subnet::Id>
+    ConstraintDescription: must be list of valid subnets
+  DBName:
+    Default: pgdb
+    Description: The database name
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters and 16 characters
+  DBUsername:
+    Default: root
+    NoEcho: 'true'
+    Description: The database admin account username
+    Type: String
+    MinLength: '1'
+    MaxLength: '16'
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9]*"
+    ConstraintDescription: must begin with a letter and contain only alphanumeric
+      characters and 16 characters
+  DBPassword:
+    Default: root1234
+    NoEcho: 'true'
+    Description: The database admin account password
+    Type: String
+    MinLength: '8'
+  DBClass:
+    Default: db.t2.micro
+    Description: Database instance class
+    Type: String
+    AllowedValues:
+    - db.t2.micro
+    - db.m1.small
+    - db.m1.large
+    - db.m1.xlarge
+    - db.m2.xlarge
+    ConstraintDescription: must select a valid database instance type.
+  DBAllocatedStorage:
+    Default: '5'
+    Description: The size of the database (Gb)
+    Type: Number
+    MinValue: '5'
+    MaxValue: '6144'
+    ConstraintDescription: must be between 5+
+
+Resources:
+
+  ############
+  # Security Group for PostgreSQL database
+  #
+  ############
+
+  SitesDBEC2SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Frontend Access
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        CidrIp: 10.0.0.0/16
+
+  ############
+  # Database Paramter Group description
+  #
+  ############
+
+  SitesDBParamGroup:
+    Type: AWS::RDS::DBParameterGroup
+    Properties:
+      Description: Database Parameter Group + pg_stat_statements
+      Family: postgres9.6
+      Parameters:
+        shared_preload_libraries: pg_stat_statements
+
+  ############
+  # Definition of RDS subnets 
+  #
+  ############
+
+  SitesDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: DB Private Subnet
+      SubnetIds:
+      - !Select [ 0, !Ref SubnetIds ]
+      - !Select [ 1, !Ref SubnetIds ]
+
+  ############
+  # RDS Instance definition
+  #
+  ############
+
+  SitesDB:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: !Sub ${DBName}-${Environment}
+      DBName:
+        Ref: DBName
+      AllocatedStorage:
+        Ref: DBAllocatedStorage
+      DBInstanceClass:
+        Ref: DBClass
+      Engine: postgres
+      MasterUsername:
+        Ref: DBUsername
+      MasterUserPassword:
+        Ref: DBPassword
+      DBSubnetGroupName:
+        Ref: SitesDBSubnetGroup
+      DBParameterGroupName:
+        Ref: SitesDBParamGroup
+      VPCSecurityGroups:
+      - Fn::GetAtt:
+        - SitesDBEC2SecurityGroup
+        - GroupId
+
+  ############
+  # RDS output
+  #
+  ############
+Outputs:
+  JDBCConnectionString:
+    Description: JDBC connection string for database
+    Export:
+      Name: !Sub ${Environment}-connectionstring
+    Value:
+      Fn::Join:
+      - ''
+      - - jdbc:postgresql://
+        - Fn::GetAtt:
+          - SitesDB
+          - Endpoint.Address
+        - ":"
+        - Fn::GetAtt:
+          - SitesDB
+          - Endpoint.Port
+        - "/"
+        - Ref: DBName

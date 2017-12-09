@@ -1,0 +1,23 @@
+version: 2
+jobs:
+  build:
+    working_directory: ~/MoodleSitesPersistence
+    docker:
+      - image: circleci/node:argon-stretch-browsers
+    environment:
+      - REGION: "us-east-1"
+    steps:
+     # install awscli
+      - run:
+          name: Install dependencies
+          working_directory: /
+          command: 'sudo apt install python-pip python-dev && sudo  pip install awscli'
+     # set default environment
+      - run:
+          name: Configure Region
+          working_directory: /
+          command: aws configure set default.region $REGION
+
+      - run:
+          name: validate template
+          command: 'aws cloudformation validate-template --template-body file://sites.cf.yaml'
